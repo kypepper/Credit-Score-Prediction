@@ -11,3 +11,6 @@ The user is prompted to input personal information such as income, credit limit,
 *Instead of credit score, the program can be trained on almost anything, given the data in a csv format. You can use this to predict products customers are likely to like, trends of a certain demographic, and how someone compares to others.
 
 Skills: Data Visualization · Machine Learning Algorithms · Credit Analysis · Regression Testing
+
+Video Demo: 
+https://www.youtube.com/watch?v=8llYedDtTfs&t=19s
