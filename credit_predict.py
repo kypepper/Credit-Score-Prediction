@@ -88,35 +88,9 @@ def display_all_graphs(X, y, predicted_credit_score, user_input):
                     axs[i+1].legend()
             except:
                 pass
-    for i, feature in enumerate(X.columns):
-        sns.histplot(X[feature], kde=True, color='green', ax=axs[i+1])
-        axs[i+1].set_xlabel(feature)
-        axs[i+1].set_ylabel('Frequency')
-        axs[i+1].set_title(f'Distribution of {feature}')
-
-        if feature in user_input:
-            try:
-                val = float(user_input[feature])
-                min_val = X[feature].min()
-                max_val = X[feature].max()
-
-                # Clamp the value to axis limits
-                if val < min_val:
-                    axs[i+1].axvline(min_val, color='red', linestyle='dashed', linewidth=2)
-                    axs[i+1].text(min_val, axs[i+1].get_ylim()[1]*0.9, 'Your Input\n(too low)', color='red')
-                elif val > max_val:
-                    axs[i+1].axvline(max_val, color='red', linestyle='dashed', linewidth=2)
-                    axs[i+1].text(max_val, axs[i+1].get_ylim()[1]*0.9, 'Your Input\n(too high)', color='red', ha='right')
-                else:
-                    axs[i+1].axvline(val, color='red', linestyle='dashed', linewidth=2, label='Your Input')
-                    axs[i+1].legend()
-            except:
-                pass
-
 
     plt.tight_layout()
     st.pyplot(fig)
-
 
 # Visualize custom CSV
 def visualize_custom_csv(data):
