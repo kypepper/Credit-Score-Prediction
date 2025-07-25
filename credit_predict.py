@@ -1,25 +1,26 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 from sklearn.model_selection import GridSearchCV
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
-# Load default dataset
-def load_default_dataset():
-    return pd.read_csv("Credit.csv", index_col=0)
+st.set_page_config(layout="wide")
 
-# Preprocessing
-def preprocess_data(data):
-    X = data.drop(columns=['Rating'])
-    y = data['Rating']
+# ------------------- Helper Functions -------------------
+def preprocess_data(data, target_col):
+    X = data.drop(columns=[target_col])
+    y = data[target_col]
 
     numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
-    categorical_features = X.select_dtypes(include=['object']).columns
+    categorical_features = X.select_dtypes(include=['object', 'bool', 'category']).columns
 
     numeric_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median')),
@@ -39,130 +40,134 @@ def preprocess_data(data):
 
     return X, y, preprocessor
 
-# Train model
 def train_model(X, y, preprocessor):
     model = Pipeline(steps=[('preprocessor', preprocessor),
                             ('regressor', GradientBoostingRegressor(random_state=42))])
-    model.fit(X, y)
-    return model
 
-# Predict score
-def predict_credit_score(model, user_input_df):
+    param_grid = {
+        'regressor__n_estimators': [100],
+        'regressor__learning_rate': [0.1],
+        'regressor__max_depth': [3]
+    }
+
+    grid_search = GridSearchCV(model, param_grid, cv=3, scoring='r2')
+    grid_search.fit(X, y)
+
+    return grid_search.best_estimator_
+
+def predict_score(model, user_input_df):
     return model.predict(user_input_df)[0]
 
-# Graphs
-def display_all_graphs(X, y, predicted_credit_score, user_input):
-    fig, axs = plt.subplots(2, len(X.columns) // 2 + 1, figsize=(20, 10))
+def clamp_to_range(val, min_val, max_val):
+    return max(min(val, max_val), min_val)
+
+def plot_distributions(X, y, user_input_df, predicted_value, target_col):
+    num_plots = len(X.columns) + 1
+    cols = 3
+    rows = int(np.ceil(num_plots / cols))
+
+    fig, axs = plt.subplots(rows, cols, figsize=(20, rows * 4))
     axs = axs.flatten()
 
-    # Plot distribution of target variable (Credit Score)
-    sns.histplot(y, kde=True, color='blue', ax=axs[0])
-    axs[0].axvline(predicted_credit_score, color='red', linestyle='dashed', linewidth=2, label='Your Predicted Score')
-    axs[0].set_xlabel('Rating')
-    axs[0].set_ylabel('Frequency')
-    axs[0].set_title('Your Credit Score vs Population')
+    # Target variable
+    sns.histplot(y, kde=True, ax=axs[0], color='blue')
+    line = clamp_to_range(predicted_value, y.min(), y.max())
+    axs[0].axvline(line, color='red', linestyle='--', label='Your Prediction')
+    axs[0].set_title(f'Distribution of {target_col}')
     axs[0].legend()
 
-    # Plot distribution of each feature with user input line
-    for i, feature in enumerate(X.columns):
-        sns.histplot(X[feature], kde=True, color='green', ax=axs[i+1])
-        axs[i+1].set_xlabel(feature)
-        axs[i+1].set_ylabel('Frequency')
-        axs[i+1].set_title(f'Distribution of {feature}')
+    for i, col in enumerate(X.columns):
+        sns.histplot(X[col], kde=True, ax=axs[i + 1], color='green')
+        val = user_input_df[col].values[0]
+        clamped_val = clamp_to_range(val, X[col].min(), X[col].max())
+        axs[i + 1].axvline(clamped_val, color='red', linestyle='--')
+        axs[i + 1].set_title(f'Distribution of {col}')
 
-        if feature in user_input:
-            try:
-                val = float(user_input[feature])
-                min_val = X[feature].min()
-                max_val = X[feature].max()
+    for ax in axs[num_plots:]:
+        ax.axis('off')
 
-                # Clamp the value to axis limits
-                if val < min_val:
-                    axs[i+1].axvline(min_val, color='red', linestyle='dashed', linewidth=2)
-                    axs[i+1].text(min_val, axs[i+1].get_ylim()[1]*0.9, 'Your Input\n(too low)', color='red')
-                elif val > max_val:
-                    axs[i+1].axvline(max_val, color='red', linestyle='dashed', linewidth=2)
-                    axs[i+1].text(max_val, axs[i+1].get_ylim()[1]*0.9, 'Your Input\n(too high)', color='red', ha='right')
-                else:
-                    axs[i+1].axvline(val, color='red', linestyle='dashed', linewidth=2, label='Your Input')
-                    axs[i+1].legend()
-            except:
-                pass
-
-    plt.tight_layout()
     st.pyplot(fig)
 
-# Visualize custom CSV
-def visualize_custom_csv(data):
-    st.subheader("Correlation Heatmap")
-    numeric_data = data.select_dtypes(include=['float64', 'int64'])
-    corr = numeric_data.corr()
+# ------------------- Streamlit App -------------------
+st.title("📊 Regression & Distribution Visualizer")
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f", ax=ax)
-    st.pyplot(fig)
+# ---------- SECTION 1: Default Credit Score Model ----------
+st.header("💳 Credit Score Prediction")
 
-    st.subheader("Build a Simple Regression")
-    features = list(numeric_data.columns)
-    if len(features) < 2:
-        st.warning("Not enough numeric columns for regression.")
-        return
+credit_data = pd.read_csv("Credit.csv", index_col=0)
+X_credit, y_credit, credit_preprocessor = preprocess_data(credit_data, 'Rating')
+credit_model = train_model(X_credit, y_credit, credit_preprocessor)
 
-    x_feature = st.selectbox("Select X feature", features, key="x_feat")
-    y_feature = st.selectbox("Select Y feature", features, index=1, key="y_feat")
+st.subheader("🔧 Input Your Credit Info Below")
+user_input = {
+    'Income': st.slider('Income', 0.0, 300.0, 50.0),
+    'Limit': st.slider('Credit Limit', 0.0, 1000.0, 200.0),
+    'Cards': st.slider('Number of Credit Cards', 1, 10, 2),
+    'Age': st.slider('Age', 18, 100, 30),
+    'Education': st.slider('Education (Years)', 1, 5, 2),
+    'Gender': st.selectbox('Gender', ['Male', 'Female']),
+    'Student': st.selectbox('Student?', ['Yes', 'No']),
+    'Married': st.selectbox('Married?', ['Yes', 'No']),
+    'Ethnicity': st.selectbox('Ethnicity', ['Caucasian', 'Asian', 'African American']),
+    'Balance': st.slider('Avg Credit Card Balance', 0.0, 2000.0, 500.0),
+}
+user_df = pd.DataFrame([user_input])
+predicted_score = predict_score(credit_model, user_df)
 
-    if x_feature != y_feature:
-        sns.lmplot(data=data, x=x_feature, y=y_feature)
-        st.pyplot(plt.gcf())
+st.success(f"✅ Predicted Credit Score: **{predicted_score:.2f}**")
 
-# Streamlit App
-def main():
-    st.title("📊 Credit Score Predictor + Custom CSV Visualizer")
+st.subheader("📉 Distribution Comparison")
+plot_distributions(X_credit, y_credit, user_df, predicted_score, "Rating")
 
-    # Default model training
-    st.header("Default Credit Score Prediction")
-    try:
-        data = load_default_dataset()
-        X, y, preprocessor = preprocess_data(data)
-        model = train_model(X, y, preprocessor)
+# ---------- SECTION 2: Upload Your Own CSV ----------
+st.markdown("---")
+st.header("📤 Custom Dataset Analysis")
+st.markdown("Please drop your own CSV if you want to visualize the correlation and perform regressions on a different topic.")
 
-        st.sidebar.header("Enter Your Info")
+uploaded_file = st.file_uploader("Upload CSV", type="csv")
 
-        user_input = {
-            'Income': st.sidebar.number_input("Income (Thousands)", min_value=0.0, value=50000.0),
-            'Limit': st.sidebar.number_input("Credit Limit", min_value=0.0, value=10000.0),
-            'Cards': st.sidebar.number_input("Number of Credit Cards", min_value=0, value=3),
-            'Age': st.sidebar.number_input("Age", min_value=18, value=30),
-            'Education': st.sidebar.number_input("Education Level (Years)", min_value=0, value=16),
-            'Gender': st.sidebar.selectbox("Gender", ['Male', 'Female']),
-            'Student': st.sidebar.selectbox("Student Status", ['Yes', 'No']),
-            'Married': st.sidebar.selectbox("Marital Status", ['Yes', 'No']),
-            'Ethnicity': st.sidebar.selectbox("Ethnicity", ['Caucasian', 'Asian', 'African American']),
-            'Balance': st.sidebar.number_input("Average Credit Card Balance", min_value=0.0, value=1500.0)
-        }
+if uploaded_file:
+    custom_data = pd.read_csv(uploaded_file)
+    st.subheader("Correlation Matrix")
+    numeric_df = custom_data.select_dtypes(include=['int64', 'float64'])
+    if not numeric_df.empty:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', ax=ax)
+        st.pyplot(fig)
 
-        user_df = pd.DataFrame(user_input, index=[0])
-        predicted_score = predict_credit_score(model, user_df)
-        st.subheader(f"📈 Predicted Credit Score: **{predicted_score:.2f}**")
-        display_all_graphs(X, y, predicted_score, user_input)
+    st.subheader("Target Selection for Regression")
+    all_columns = custom_data.columns.tolist()
+    target_col = st.selectbox("Select Target Column (what to predict)", all_columns)
+    feature_cols = st.multiselect("Select Feature Columns (inputs)", [col for col in all_columns if col != target_col])
 
-    except FileNotFoundError:
-        st.error("Default file 'Credit.csv' not found in working directory.")
-
-    # Custom CSV section
-    st.markdown("---")
-    st.header("📂 Please drop your own CSV if you want to visualize the correlation and perform regressions on a different topic.")
-    custom_file = st.file_uploader("Upload your CSV file", type="csv")
-
-    if custom_file is not None:
+    if feature_cols and target_col:
         try:
-            custom_data = pd.read_csv(custom_file)
-            st.success("Custom dataset loaded successfully!")
-            st.write("Preview of uploaded data:")
-            st.dataframe(custom_data.head())
-            visualize_custom_csv(custom_data)
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
+            regression_df = custom_data[feature_cols + [target_col]].dropna()
+            X_custom, y_custom, custom_preprocessor = preprocess_data(regression_df, target_col)
+            custom_model = train_model(X_custom, y_custom, custom_preprocessor)
 
-if __name__ == "__main__":
-    main()
+            st.subheader("🔢 Enter Your Input Values")
+
+            custom_input_dict = {}
+            for col in feature_cols:
+                if regression_df[col].dtype == 'object':
+                    unique_vals = regression_df[col].dropna().unique().tolist()
+                    if unique_vals:
+                        custom_input_dict[col] = st.selectbox(f"{col}", unique_vals)
+                    else:
+                        custom_input_dict[col] = ""
+                else:
+                    min_val, max_val = float(regression_df[col].min()), float(regression_df[col].max())
+                    default_val = float(regression_df[col].mean())
+                    custom_input_dict[col] = st.slider(f"{col}", min_val, max_val, default_val)
+
+            custom_input_df = pd.DataFrame([custom_input_dict])
+            predicted_val = predict_score(custom_model, custom_input_df)
+
+            st.success(f"✅ Predicted {target_col}: **{predicted_val:.2f}**")
+
+            st.subheader("📉 Distribution Comparison")
+            plot_distributions(X_custom, y_custom, custom_input_df, predicted_val, target_col)
+
+        except Exception as e:
+            st.error(f"Error in model training or prediction: {e}")
